@@ -9,13 +9,14 @@ from typing import Iterator
 import numpy as np
 from paho.mqtt import client as mqtt_client
 from typing import Any
+import struct
 
 from flask import Flask, Response, render_template, request, stream_with_context
 
 logging.basicConfig(stream=sys.stdout, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
-FS = 100 # Hz: Sampling frequency
+FS = 1000 # Hz: Sampling frequency
 LOCK = threading.Lock()
 
 class WebApp:
@@ -95,9 +96,34 @@ class MqttManager:
     
     def subscribe(self):
         def on_message(client: mqtt_client, userdata: None, msg: mqtt_client.MQTTMessage):
+            # print(f"Received `{msg.payload}` from `{self.pub_topic}` topic")
+            # values = np.array([int(x) for x in msg.payload.decode().split(',')])
+            # f, X = get_fft(values, FS)
+            # peak = 20
+            # max_val = get_max_around_peak(f, X, peak, 2)
+            # print(f"Max value around {peak} Hz: {max_val}")
+            payload = msg.payload  # Raw byte data
+            int_count = len(payload) // 4  # Each int is 4 bytes (assuming 32-bit integers)
+            
+            int_array = np.array(list(struct.unpack(f'{int_count}i', payload)))  # Unpack bytes into integers
+            # print(f"Received array: {int_array} from {self.sub_topic} topic")
+
+            f, X = get_fft(int_array, FS)
             with LOCK:
-                print(f"Received `{msg.payload.decode()}` from `{self.pub_topic}` topic")
-        
+                print(int_array)
+
+            peak = 100 # Hz
+            peak_amp = get_max_around_peak(f, X, peak, 2)
+            peak_amp0 = get_max_around_peak(f, X, 0, 2)
+            
+            with LOCK:
+                print(f"Peak of {peak_amp} around {peak} Hz, {peak_amp0} around 0 Hz")
+
+            if (peak_amp > 150):
+                self.publish("0,0")
+            else:
+                self.publish(f"1,{int(abs(peak_amp-150)/10)}")
+
         self.client.subscribe(self.sub_topic)
         self.client.on_message = on_message
 
@@ -147,7 +173,7 @@ def get_fft(data: np.ndarray, fs:float) -> np.ndarray:
 
 def get_max_around_peak(f: np.ndarray, X: np.ndarray, peak: float, width: float=2.0) -> float:
     """Retrieve the maximum value around the peak [peak-width, peak+width]."""
-    mask = np.logical_and(f > peak - width, f < peak + width)
+    mask = np.logical_and(abs(f) > peak - width, abs(f) < peak + width)
     return np.max(abs(X[mask]))
 
 def get_values() -> np.ndarray:
