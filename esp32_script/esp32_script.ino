@@ -2,28 +2,32 @@
 #include <PubSubClient.h>
 
 const char* ssid = 
-  "wifi-robot"; // WiFi in the Lab
+  "wifi-robot"; // WiFi in the Lab (public)
 //  "ZeroYear"; // WiFi at home
 
-const char *pass = "olar1234";
+//const char *pass = "olar1234"; //password for home WiFi
 
 const char* mqtt_server = "192.168.0.107"; // Rasperry Pi IP
 
 // MQTT Broker for testing
-const char *mqtt_broker = "broker.emqx.io";
+/*const char *mqtt_broker = "broker.emqx.io";
 const char *topic = "emqx/esp32";
 const char *mqtt_username = "emqx";
 const char *mqtt_password = "public";
-const int mqtt_port = 1883;
+const int mqtt_port = 1883;*/
 
 WiFiClient espClient;
 PubSubClient client(espClient);
 
 int analogPin = A3;
 int photodiode_measure = 0; // store value we read from photo diode
-int photodiode_measures[100];
-char measures_msg[500];
+#define MSG_SIZE 50
+
+int photodiode_measures[MSG_SIZE];
+//char measures_msg[6*MSG_SIZE];
 int measures_cnt = 0;
+
+int dir, wait_time;
 
 // defines pins
 #define stepPin 2
@@ -50,8 +54,8 @@ void setup_wifi() {
   Serial.print("Connecting to ");
   Serial.println(ssid);
 
-  //WiFi.begin(ssid);
-  WiFi.begin(ssid, pass);
+  WiFi.begin(ssid);
+  //WiFi.begin(ssid, pass);
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -79,9 +83,8 @@ void callback(char* topic, byte* message, unsigned int length) {
   if (strcmp(topic, "motor") == 0) {
     //format for our Raspberry Pi message
     // DIR,WAIT_TIME
-    // DIR is equal to 0 for LOW and 1 for HIGH
+    // DIR is equal to 0 for LOW and 1 for HIGH (-1)
     // WAIT_TIME is an integer
-    int dir, wait_time;
     
     // Parse message into DIR and WAIT_TIME
     if (sscanf(messageTemp.c_str(), "%d,%d", &dir, &wait_time) == 2) {
@@ -89,12 +92,6 @@ void callback(char* topic, byte* message, unsigned int length) {
       Serial.print(dir);
       Serial.print(", Wait Time: ");
       Serial.println(wait_time);
-      
-      digitalWrite(dirPin, dir);  // Set motor direction
-      digitalWrite(stepPin, HIGH); 
-      delayMicroseconds(wait_time);
-      digitalWrite(stepPin, LOW);
-      delayMicroseconds(wait_time);
     } else {
       Serial.println("Invalid motor command format!");
     }
@@ -111,6 +108,7 @@ void reconnect() {
       Serial.println("connected");
       // Subscribe
       client.subscribe("testTopic");
+      client.subscribe("motor");
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
@@ -120,21 +118,30 @@ void reconnect() {
     }
   }
 }
+
 void loop() {
   if (!client.connected()) {
     reconnect();
   }
   client.loop();
 
+  //char *testmsg = "BATMAN";
+  //client.publish("testTopic", testmsg);
+
   photodiode_measure = analogRead(analogPin);  // read the input from photodiode
 
-  if(measures_cnt < 100){
+  if(measures_cnt < MSG_SIZE){
     photodiode_measures[measures_cnt] = photodiode_measure;
     measures_cnt += 1;
   }else{
     // we need to onvert integer array to char array (mqtt message!)
+    Serial.println(photodiode_measures[0]);  
+    client.publish("measures", (uint8_t*)photodiode_measures, (sizeof(photodiode_measures)/sizeof(photodiode_measures[0])) * sizeof(int));
+    measures_cnt = 0;
+
+    /*
     measures_msg[0] = '\0';  // Clear the buffer
-    for (int i = 0; i < 100; i++) {
+    for (int i = 0; i < MSG_SIZE; i++) {
         char buffer[6];  // buffer has integer and a comma
         snprintf(buffer, sizeof(buffer), "%d,", photodiode_measures[i]);
         strncat(measures_msg, buffer, sizeof(measures_msg) - strlen(measures_msg) - 1);
@@ -147,6 +154,25 @@ void loop() {
     }
     Serial.println(measures_msg);
     client.publish("measures", measures_msg);
-    measures_cnt = 0;
+    measures_cnt = 0;*/
   }
+  if(dir == 0){
+    digitalWrite(stepPin, LOW);
+    
+  }else if(dir==-1){
+    digitalWrite(dirPin, LOW);
+
+    digitalWrite(stepPin, HIGH); 
+    delayMicroseconds(wait_time);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(wait_time);
+  }else{
+    digitalWrite(dirPin, HIGH);
+
+    digitalWrite(stepPin, HIGH); 
+    delayMicroseconds(wait_time);
+    digitalWrite(stepPin, LOW);
+    delayMicroseconds(wait_time);
+  }
+  delay(1);
 }
